@@ -9,6 +9,7 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 
 /**
  * 外部大脑 HTTP 适配器（新增文件，打到 fork 的 core 模块）。
