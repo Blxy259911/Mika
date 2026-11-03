@@ -18,13 +18,21 @@ import kotlinx.serialization.json.putJsonArray
  * 任务路由（/tasks…）保持原样，mika_run_task 不动。
  *
  * 契约（错误风格与 RemoteTaskApi 一致）：
- *  POST /api/v1/brain/sessions            {goal, conversation?} -> 201 {session_id, goal, conversation, tools}
+ *  POST /api/v1/brain/sessions            {goal, conversation?, client?} -> 201 {session_id, goal, conversation, client?, tools}
+ *  GET  /api/v1/brain/sessions            -> {sessions:[{session_id, goal, client?, steps, created_at_ms}]}
  *  GET  /api/v1/brain/sessions/{id}/tools -> {session_id, tools:[name,...]}
  *  POST /api/v1/brain/sessions/{id}/step  {tool, arguments?}   -> McpToolSession.call 的原样结果
  *  POST /api/v1/brain/sessions/{id}/close -> {session_id, closed:true}
  *  未知字段拒绝；白名单外 tool 为 400；会话不存在为 404；已关闭后调用为 409。
  *  根 GET /api/v1 的 capabilities 必须同时加上 "external_brain"，
  *  客户端以此为准判断补丁版是否在跑，缺失时不得回落到 mika_run_task。
+ *
+ * 助手无关：client 是调用方自报的标识（如 "muse"、"grok"、"my-bot"），
+ * 仅用于在列表里区分会话归属，不参与鉴权、不限制助手种类。鉴权仍走
+ * RemoteHost / RemoteAccess 已有的一套，与原版任务 API 完全相同。
+ * 原版 API 不动：/api/v1/tasks* 与 /mcp（McpTaskTools）保持原样，
+ * brain 只是新增的 /api/v1/brain/* 前缀；brain 未接线时该前缀根本
+ * 不出现，原版行为与上游一致。
  */
 class ExternalBrainApi(
     private val sessions: ExternalBrainSessions,
@@ -45,18 +53,34 @@ class ExternalBrainApi(
 
     private fun route(req: HttpRequest): HttpResponse {
         val segments = req.path.removePrefix(ROOT).trim('/').split('/').filter { it.isNotEmpty() }
-        // POST /sessions
+        // POST /sessions, or GET /sessions (list, for multi-assistant coexistence)
         if (segments == listOf("sessions")) {
+            if (req.method == "GET") {
+                return ok(buildJsonObject {
+                    putJsonArray("sessions") {
+                        sessions.list().forEach { s ->
+                            add(buildJsonObject {
+                                put("session_id", s.id)
+                                put("goal", s.goal)
+                                if (s.client != null) put("client", s.client)
+                                put("steps", s.steps)
+                                put("created_at_ms", s.createdAtMs)
+                            })
+                        }
+                    }
+                })
+            }
             if (req.method != "POST") throw BrainError(405, "method_not_allowed", "Method not allowed")
-            val body = body(req, setOf("goal", "conversation"))
+            val body = body(req, setOf("goal", "conversation", "client"))
             val goal = string(body, "goal").orEmpty()
             if (goal.isBlank()) throw BrainError(400, "invalid_argument", "goal must not be blank")
-            val session = sessions.open(goal, string(body, "conversation"), clock)
+            val session = sessions.open(goal, string(body, "conversation"), string(body, "client"), clock)
             val tools = sessions.tools(session.id).orEmpty()
             return ok(buildJsonObject {
                 put("session_id", session.id)
                 put("goal", session.goal)
                 put("conversation", session.conversation)
+                if (session.client != null) put("client", session.client)
                 putJsonArray("tools") { tools.forEach { add(it) } }
             }, 201)
         }
