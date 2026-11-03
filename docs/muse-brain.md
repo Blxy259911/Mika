@@ -48,17 +48,46 @@ allow-listing, unknown-tool rejection without execution, and closed-session
 rejection. This branch has not yet been through those checks on a real
 device; do not ship it as verified until they pass.
 
-## Safety boundaries (unchanged from upstream, plus one user rule)
+## Autonomous mode for the owner's own Android (user instruction, 2026-11-03)
 
-- Payments, confirmations and phone handover can never be approved remotely.
-  A brain step that hits one must stop and hand it to the person on the phone.
+The user instructed: cancel the operational restrictions on their own
+Android, so that a command they issue runs on Android as issued, including
+syntactically valid shell commands, uninstalling a named app, changing a
+named setting, and installing a named APK.
+
+In Muse's layer this means: for operations **the user explicitly issues for
+their own device**, Muse adds no extra per-step confirmation gate and no
+extra allow-list beyond the brain session's `phone_*` / `web_*` tools.
+`phone_system_command` is already a `phone_*` tool, so a user-issued Android
+shell command (including `su -c …` on a rooted device the user owns) goes
+through that existing tool, and its output is returned and logged. Muse
+will not invent a high-risk operation on its own: uninstall / settings /
+install / shell actions happen only when the user names them.
+
+Remaining code note (not yet removed): upstream `PhoneCommand` still steers
+shell commands whose purpose is tap / type / key / launch / share back to
+the dedicated phone tools (`use_phone_tool`). In autonomous mode Muse does
+not stop on that refusal; it achieves the same effect with the dedicated
+tool. Removing that phone-side steering for brain sessions is a separate,
+scoped code change, not claimed done here.
+
+## Hard floors (not cancelled by the autonomous instruction)
+
+- Commands targeting other people or systems, illegal acts, malware, or
+  attacks are not executed, even if syntactically valid.
+- Payment authentication itself is done by the bank / payment app on the
+  phone; Muse cannot approve a payment on the user's behalf. That is the
+  provider's confirmation, not a Muse gate.
+- **SMS rule set by the user on 2026-11-03 is kept as a separate privacy
+  rule: only verification codes may be viewed; all other SMS must not be
+  viewed.** The autonomous instruction above is read as cancelling Muse's
+  operational confirmation gates, not as cancelling that privacy rule.
+  If the user explicitly cancels the SMS rule too, record that separately.
 - Wake/unlock and gateway device access keep their existing off-by-default
   switches; this branch does not change their defaults.
-- **SMS rule set by the user: only verification codes may be viewed; all
-  other SMS must not be viewed.** In practice: only use the single code a
-  task is currently waiting for; do not open the SMS list, do not read other
-  messages, do not store codes, and do not report non-code message content.
-  The brain session has no general SMS-reading tool; a code is used only on
-  the narrow "this task is waiting for a code" path.
-- Do not uninstall apps, clear data, or remove other accessibility services
-  (upstream install-with-agent rules apply unchanged).
+- Irreversible effects (deleting data, uninstalling, system settings) are
+  still reported with their exact command and effect before running when
+  the command is destructive; for a user-issued command that is the report
+  itself, not an extra approval gate, unless the command targets the system
+  partition or a system-critical package, in which case Muse stops and
+  asks first.
