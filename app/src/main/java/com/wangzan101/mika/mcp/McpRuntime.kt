@@ -48,12 +48,12 @@ class McpRuntime(
     /**
      * External-brain registry, when one exists. Default null: the brain
      * entry points do not appear at all, exactly as upstream.
-     * This is plumbing only. Do NOT construct a registry here with a
-     * dummy screen: a real registry needs a McpServer built from a
-     * brain phone session (helper + accessibility + virtual display,
-     * lifecycle tied to the session, extracted from TaskRun's phone
-     * setup — see docs/muse-brain.md). Until that component lands,
-     * callers pass nothing and the brain API stays off.
+     * The real supplier is BrainPhone (same file's sibling in this package):
+     * it builds a McpServer whose assemble creates a per-session phone
+     * port (helper + accessibility + virtual display, lifecycle tied to
+     * the session via ExternalBrainSessions.onClose) from TaskRun's phone
+     * setup — see docs/muse-brain.md. Do NOT construct a registry here
+     * with a dummy screen.
      */
     brain: ExternalBrainSessions? = null,
 ) {
