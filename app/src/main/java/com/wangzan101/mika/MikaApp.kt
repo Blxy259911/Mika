@@ -88,8 +88,17 @@ class MikaApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.Owner, Ph
     val remoteTasks by lazy { RemoteTaskHub(this) }
 
     /**
+     * 外部大脑的手机供给:每个 brain 会话自己的虚拟屏、占用登记和收尾,见 BrainPhone。
+     * 这里只建供给对象本身,不接手机;手机在第一个需要手机的 brain 工具调用时才接上,
+     * 会话关闭时由 ExternalBrainSessions 的 onClose 回调放掉。
+     */
+    val brainPhone by lazy { com.wangzan101.mika.mcp.BrainPhone(this, remoteTasks) }
+
+    /**
      * 电脑连接(MCP):开关、访问令牌(和服务商的 Key 一样加密存)、监听。局域网那种默认关着;
      * USB 那种由电脑经 adb 打开,只到这次关机为止(开机编号和 shell 里 `settings get global boot_count` 读到的一样)。
+     * brain 参数不再是默认 null:传了 brainPhone 的注册表,RemoteEndpoints 才会把
+     * /api/v1/brain 前缀和根 capabilities 里的 external_brain 打开。
      */
     val mcp by lazy {
         val settingsDir = java.io.File(filesDir, "settings")
@@ -99,7 +108,8 @@ class MikaApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.Owner, Ph
                 bootId = { android.provider.Settings.Global.getString(contentResolver, android.provider.Settings.Global.BOOT_COUNT) ?: "null" },
                 infoFile = { getExternalFilesDir(null)?.let { java.io.File(it, com.wangzan101.mika.core.mcp.McpUsb.INFO_FILE) } }),
             remoteTasks, com.wangzan101.mika.device.AndroidDeviceAccess(this) { phone.hub.shell.value },
-            com.wangzan101.mika.settings.RelaySettings(settingsDir, com.wangzan101.mika.settings.KeystoreKeyCipher("mika-remote-relay")))
+            com.wangzan101.mika.settings.RelaySettings(settingsDir, com.wangzan101.mika.settings.KeystoreKeyCipher("mika-remote-relay")),
+            brain = brainPhone.brain)
     }
     val childRuns by lazy { FileChildRunStore(java.io.File(filesDir, "children-v3.json")) }
 
