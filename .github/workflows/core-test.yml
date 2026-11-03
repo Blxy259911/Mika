@@ -1,0 +1,25 @@
+name: core-test
+
+# Runs on GitHub's runner, not on the author's sandbox, because the
+# author's local Gradle daemon cannot communicate in that sandbox
+# (proven with a trivial Gradle project: daemon starts, client never
+# receives a message). This workflow is the compilation + core-test
+# verification path for the muse-brain branch until a local build works.
+on:
+  push:
+    branches: [muse-brain]
+  pull_request:
+    branches: [muse-brain]
+
+jobs:
+  core-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v3
+      - name: Brain core tests
+        run: ./gradlew :core:test --tests "com.wangzan101.mika.core.brain.ExternalBrainSessionsTest" --tests "com.wangzan101.mika.core.mcp.McpServerTest"
