@@ -37,10 +37,13 @@ class McpBrainTools(private val sessions: ExternalBrainSessions) {
         add(tool(OPEN, "Open an external-brain session on the Android phone. " +
             "The phone does NOT plan and does NOT call its local model in this session; " +
             "the caller decides every step and executes it with mika_brain_step. " +
-            "Only phone_*/web_* screen tools are available in the session.",
+            "Only phone_*/web_* screen tools are available in the session. " +
+            "The caller may be any personal assistant (Muse, Grok, another bot); " +
+            "pass its name as optional client so concurrent sessions stay distinguishable.",
             required = listOf("goal")) {
             putJsonObject("goal") { put("type", "string") }
             putJsonObject("conversation") { put("type", "string") }
+            putJsonObject("client") { put("type", "string") }
         })
         add(tool(TOOLS, "List the frozen, allow-listed screen tools for an external-brain session. " +
             "Use only names from this list in mika_brain_step.",
@@ -62,11 +65,12 @@ class McpBrainTools(private val sessions: ExternalBrainSessions) {
         OPEN -> {
             val goal = string(args, "goal").orEmpty()
             if (goal.isBlank()) error("goal must not be blank")
-            val session = sessions.open(goal, optString(args, "conversation")) { System.currentTimeMillis() }
+            val session = sessions.open(goal, optString(args, "conversation"), optString(args, "client")) { System.currentTimeMillis() }
             buildJsonObject {
                 put("session_id", session.id)
                 put("goal", session.goal)
                 put("conversation", session.conversation)
+                if (session.client != null) put("client", session.client)
                 putJsonArray("tools") { sessions.tools(session.id).orEmpty().forEach { add(it) } }
             }
         }
