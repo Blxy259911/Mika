@@ -93,6 +93,12 @@ when the wiring was attempted (2026-11-03):
   Do NOT fake this with a dummy screen, and do NOT reuse a running task's
   dispatcher: a live `AgentLoop` and a brain session would fight over the
   same screen.
+- Plumbing step already landed: `McpRuntime` now accepts an optional
+  `brain: ExternalBrainSessions? = null` and forwards it to
+  `RemoteEndpoints`. The default is null, so with no supplier the brain
+  API stays off and existing callers (single `McpRuntime` construction
+  in `MikaApp`) are unchanged. What remains is the screen supplier
+  described above; plumbing alone does not make `external_brain` appear.
 - Likewise, exposing `mika_brain_*` over MCP requires merging the brain
   tools into `McpRpc`'s tool set; do not hack it by renaming brain steps
   as tasks.
