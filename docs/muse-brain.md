@@ -71,21 +71,53 @@ curl -X POST -H "Authorization: Bearer $MIKA_TOKEN" -H "Content-Type: applicatio
 
 ## What is still required in the app layer (not done on this branch)
 
-`McpRuntime` does not currently pass a `ToolDispatcher` factory to the remote
-layer, so `RemoteEndpoints(brain = …)` cannot yet be constructed from the
-existing app code. The remaining app step is to extract the factory already
-used by `TaskRun` (`toolDispatcher(accessedPhone, …, web = …)`) and pass a
-`McpServer` built from it into `RemoteEndpoints`, reusing the same phone/web
-capabilities and `ActionExecutor` checks instead of writing a second set.
-Likewise, exposing `mika_brain_*` over MCP requires merging the brain tools
-into `McpRpc`'s tool set; do not hack it by renaming brain steps as tasks.
+`McpRuntime` does not currently pass a brain registry to the remote layer,
+so `RemoteEndpoints(brain = …)` cannot yet be constructed from existing app
+code — and this is NOT a one-line change, for a structural reason found
+when the wiring was attempted (2026-11-03):
+
+- Upstream production code never constructs `McpServer` at all; it exists
+  only in `McpServerTest` with a `FakeScreen`. There is no existing
+  `ToolDispatcher` factory in `McpRuntime` to hand over.
+- The phone screen a brain session needs (`AndroidScreen` via
+  `LazyPhoneScreen`, helper shell, accessibility service, virtual display,
+  `AppAccessScreenPort`) is built per `TaskRun` inside `TaskRun.execute`
+  (`connectPhone()`), with a `ResourceScope` lifecycle tied to that task.
+  `McpRuntime` only holds `tasks` and `device.access`; it has no screen.
+- Therefore the correct wiring is a refactor, not a parameter pass:
+  extract the phone-side setup from `TaskRun` into a reusable component
+  whose lifecycle is tied to a brain session (open: connect helper +
+  accessibility + virtual display; close: release them, as a task does),
+  then build `McpServer` from `toolDispatcher(thatScreen, runSpec = spec)`
+  and pass `ExternalBrainSessions(server)` into `RemoteEndpoints`.
+  Do NOT fake this with a dummy screen, and do NOT reuse a running task's
+  dispatcher: a live `AgentLoop` and a brain session would fight over the
+  same screen.
+- Likewise, exposing `mika_brain_*` over MCP requires merging the brain
+  tools into `McpRpc`'s tool set; do not hack it by renaming brain steps
+  as tasks.
+
+Core-level verification on this branch (no Android device needed):
+`core/src/test/.../brain/ExternalBrainSessionsTest.kt` covers, on a
+`FakeScreen`: tool-list allow-listing, unknown-tool rejection without
+execution, concurrent assistant sessions staying independent, and the HTTP
+open / list / close contract including unknown-field rejection.
+Run it with `./gradlew :core:test` once a JDK 17 + Android SDK are present.
+Note (2026-11-03): the author's sandbox cannot run Gradle at all — a
+trivial Gradle project fails the same way (daemon starts, client never
+receives a message), so local compilation is currently unverified for
+environmental, not code, reasons. The verification path is
+`.github/workflows/core-test.yml`, which runs the brain + MCP tests on a
+GitHub runner on every push to this branch; check its Actions result
+before claiming the branch compiles.
 
 Before any release build, run the upstream development checks
 (`./gradlew :core:test :core:cliTest :app:testDebugUnitTest :app:assembleDebug`
-and the Python tests under `tools/mika/tests`) plus new tests for: tool-list
-allow-listing, unknown-tool rejection without execution, and closed-session
-rejection. This branch has not yet been through those checks on a real
-device; do not ship it as verified until they pass.
+and the Python tests under `tools/mika/tests`). This branch has not yet
+been through those checks on a real device; do not ship it as verified
+until they pass, and do not install it on a phone as if the brain entry
+point were live — it will not appear until the app-layer refactor above
+lands and a build is produced from it.
 
 ## Autonomous mode for the owner's own Android (user instruction, 2026-11-03)
 
