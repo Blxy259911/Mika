@@ -5,6 +5,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -31,7 +32,7 @@ import kotlinx.serialization.json.putJsonArray
  * 仅用于在列表里区分会话归属，不参与鉴权、不限制助手种类。鉴权仍走
  * RemoteHost / RemoteAccess 已有的一套，与原版任务 API 完全相同。
  * 原版 API 不动：/api/v1/tasks* 与 /mcp（McpTaskTools）保持原样，
- * brain 只是新增的 /api/v1/brain/* 前缀；brain 未接线时该前缀根本
+ * brain 只是新增的 /api/v1/brain/ 开头的前缀；brain 未接线时该前缀根本
  * 不出现，原版行为与上游一致。
  */
 class ExternalBrainApi(
