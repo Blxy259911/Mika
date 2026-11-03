@@ -222,3 +222,35 @@ scoped code change, not claimed done here.
   itself, not an extra approval gate, unless the command targets the system
   partition or a system-critical package, in which case Muse stops and
   asks first.
+
+## Root grant patch, muse-brain only (user instruction, 2026-11-03)
+
+The owner asked whether Mika's source can call root directly, and then
+chose the narrow scope first: a root grant patch only, not a root-started
+helper.
+
+What it does: `app/.../cap/phone/setup/RootGrant.kt` runs at
+`BuiltinShellRecovery.start()`, in the background, only when Mika does not
+already hold `WRITE_SECURE_SETTINGS`. It tries `su` candidates in order
+(`su`, system su paths, KernelSU and Magisk paths) and runs exactly one
+command as root: `pm grant` for Mika's own package and that one permission.
+That permission is the same one Mika's recovery already asks for through
+the helper shell; on the owner's OnePlus phone that helper-shell path fails
+because the helper shell lacks `GRANT_RUNTIME_PERMISSIONS`, while root can
+grant it. On success, and only for capabilities the user has not declined,
+`BuiltinShellRecovery` marks `RestoreAfterReboot` and
+`AutoWirelessDebugging` applied, so the existing wireless-debugging auto-on
+and boot-restore gates can use the permission. It does not grant anything
+to another app, run any other command, or start the helper as root.
+
+Why not a root-started helper: the helper handoff only accepts shell uid
+2000, so a helper started as root uid 0 would be rejected by
+`HelperHub.offer`. A root-started helper would have to drop to shell uid
+and carry a nonce issued by Mika itself, which is a larger, separate change
+and is not claimed here.
+
+Failure is silent by design: no root, root denied, or no su binary all just
+leave Mika on the old helper-shell path, exactly as before. Reversible:
+`pm revoke` for Mika's own package and that permission. This patch is on
+the muse-brain branch only; it is not proposed to upstream, which has no
+root path.

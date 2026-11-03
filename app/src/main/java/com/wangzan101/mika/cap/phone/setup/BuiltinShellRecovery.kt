@@ -12,6 +12,7 @@ import android.content.pm.PackageManager
 import android.database.ContentObserver
 import android.os.Build
 import android.os.UserManager
+import android.util.Log
 import android.provider.Settings
 import com.wangzan101.mika.cap.phone.a11y.ScreenAccessibility
 import com.wangzan101.mika.core.shell.A11yLossRecord
@@ -122,6 +123,32 @@ class BuiltinShellRecovery(
         if (started) return
         started = true
         scope.launch { permissions.applyWhenRunning(control.status) }
+        // Root grant, muse-brain only: if Mika does not hold
+        // WRITE_SECURE_SETTINGS yet, try to grant it to Mika itself via su.
+        // This is the same permission the helper-shell path already asks for;
+        // on this phone that path fails because the helper shell lacks
+        // GRANT_RUNTIME_PERMISSIONS, while root can grant it. On success the
+        // two capabilities that only need this permission are marked applied,
+        // but only when the user has not declined them, so the existing
+        // wireless-debugging auto-on and boot-restore gates can use it.
+        // Failure changes nothing: Mika keeps the old path.
+        scope.launch {
+            runCatching {
+                if (RootGrant.tryGrant(app)) {
+                    val current = settings.consent.value
+                    var next = current
+                    for (capability in listOf(
+                        RecoveryCapability.RestoreAfterReboot,
+                        RecoveryCapability.AutoWirelessDebugging,
+                    )) {
+                        if (current.wants(capability) && !current.isApplied(capability)) {
+                            next = next.withApplied(capability, true)
+                        }
+                    }
+                    if (next != current) settings.save(next)
+                }
+            }.onFailure { Log.w("MikaRootGrant", "root grant attempt failed", it) }
+        }
         val service = accessibility
         // 启动时看一眼:被强行停止后系统会把服务从列表里拿掉,或者在列表里却迟迟不绑定;记下来给诊断信息
         val initial = service.value
