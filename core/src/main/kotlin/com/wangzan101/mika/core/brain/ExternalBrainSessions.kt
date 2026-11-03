@@ -15,7 +15,7 @@ import java.util.UUID
  * 工具目录在开局冻结，所有调用都走 ActionExecutor。
  * 这里只做四件它原来没有的事：
  *  1. 给会话一个外部可见的 id、goal、步数，并集中登记/关闭；
- *  2. 把工具表过滤到手机/网页屏工具（phone_*/web_*），不放行
+ *  2. 把工具表过滤到手机/网页屏工具（phone_ 前缀与 web_ 前缀），不放行
  *     模型循环专用工具（ask_user、hand_to_user、end_not_done、
  *     memory_save、skill_save、settings_set 等）；
  *  3. 让“会话不存在 / 已关闭”成为可区分的错误，而不是静默重开。
