@@ -18,6 +18,7 @@ import kotlinx.coroutines.SupervisorJob
 import com.wangzan101.mika.core.mcp.McpUsb
 import com.wangzan101.mika.core.shell.HelperHandoff
 import com.wangzan101.mika.device.AndroidDeviceAccess
+import com.wangzan101.mika.core.brain.ExternalBrainSessions
 import com.wangzan101.mika.core.remote.RemoteTasks
 import com.wangzan101.mika.settings.McpSettings
 import com.wangzan101.mika.settings.McpUsbSettings
@@ -44,12 +45,23 @@ class McpRuntime(
     private val context: Context, val settings: McpSettings, val usb: McpUsbSettings, private val tasks: RemoteTasks,
     val device: AndroidDeviceAccess,
     val relaySettings: RelaySettings,
+    /**
+     * External-brain registry, when one exists. Default null: the brain
+     * entry points do not appear at all, exactly as upstream.
+     * This is plumbing only. Do NOT construct a registry here with a
+     * dummy screen: a real registry needs a McpServer built from a
+     * brain phone session (helper + accessibility + virtual display,
+     * lifecycle tied to the session, extracted from TaskRun's phone
+     * setup — see docs/muse-brain.md). Until that component lands,
+     * callers pass nothing and the brain API stays off.
+     */
+    brain: ExternalBrainSessions? = null,
 ) {
     private val _state = MutableStateFlow<McpServerState>(McpServerState.Off)
     val state: StateFlow<McpServerState> = _state.asStateFlow()
     @Volatile private var host: RemoteHost? = null
     private var hostListen = McpModes.Listen.Off
-    private val endpoints = RemoteEndpoints(tasks, BuildConfig.VERSION_NAME, device = device.access)
+    private val endpoints = RemoteEndpoints(tasks, BuildConfig.VERSION_NAME, device = device.access, brain = brain)
     private val relayAccess = RemoteAccess(token = { if (relaySettings.config.value.enabled) settings.token() else null })
     // 经网关来的请求要另开「允许经网关唤醒和解锁」才看得到屏幕能力;手机上的远程亮屏与解锁许可照样要开。
     private val relay = RelayClient(CoroutineScope(SupervisorJob() + Dispatchers.IO), { req ->
