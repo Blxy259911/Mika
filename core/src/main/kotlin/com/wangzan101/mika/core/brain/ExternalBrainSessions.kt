@@ -29,7 +29,15 @@ import java.util.UUID
  * 注意：McpServer 的 assemble 工厂由 App 侧传入（见 APP_WIRING.md），
  * 本文件不假设 TaskRun 的具体装配签名。
  */
-class ExternalBrainSessions(private val server: McpServer) {
+/**
+ * [onClose] 在会话关闭后调一次(见 close):App 侧用它放掉该会话建的手机资源
+ * (虚拟屏、shell 占用等)。默认 null 时行为和以前完全一样;回调本身抛错不会
+ * 把一次成功的关闭变成失败,回调必须是幂等的(见 BrainPhone 的 release)。
+ */
+class ExternalBrainSessions(
+    private val server: McpServer,
+    private val onClose: (suspend (Session) -> Unit)? = null,
+) {
 
     data class Session(
         val id: String,
@@ -94,6 +102,7 @@ class ExternalBrainSessions(private val server: McpServer) {
     suspend fun close(id: String): Boolean {
         val session = synchronized(lock) { sessions.remove(id) } ?: return false
         session.session.close()
+        runCatching { onClose?.invoke(session) }
         return true
     }
 
