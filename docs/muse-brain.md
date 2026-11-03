@@ -254,3 +254,38 @@ leave Mika on the old helper-shell path, exactly as before. Reversible:
 `pm revoke` for Mika's own package and that permission. This patch is on
 the muse-brain branch only; it is not proposed to upstream, which has no
 root path.
+
+## Root-started helper, muse-brain only (user instruction, 2026-11-03)
+
+After the root grant patch, the owner's diagnostics showed the grant
+itself worked (WRITE_SECURE_SETTINGS granted, restore-after-reboot and
+auto-wireless-debugging applied, helper moved from Failed to Connecting),
+but the helper still could not connect: 0 connect candidates, scan 0
+open, AdbConnectionException CONNECT_FAILED, so a manual wireless-
+debugging toggle was still needed. The root grant fixed permission, not
+port discovery.
+
+This patch adds a fallback for exactly that case, in
+`BuiltinShellManager.AndroidPlatform.launchHelper`: when the adb route
+throws AdbConnectionException, and only when the phone is already paired,
+Mika tries `RootHelperLauncher.tryLaunch`. It runs the same
+`HelperHandoff.command` the adb route runs, with a fresh nonce issued by
+Mika for each attempt, but through su dropped to shell uid 2000
+(`su shell -c ...`, then `su 2000 -c ...`, across su binary candidates).
+That uid is required: HelperHub only accepts a helper whose calling uid
+is 2000, so a helper started as root uid 0 would be rejected, and this
+patch never tries that. If a root attempt hands off, launchHelper
+returns and the engine's normal handoff wait succeeds; if every root
+attempt fails, the original adb exception is rethrown, so the engine
+records ConnectFailed and retries with its usual backoff, exactly as
+before. Failed attempts close or destroy their su process; nothing
+extra is left running.
+
+Limits, stated plainly: this does not change pairing, the helper's
+own code, or the handoff checks; it only changes how the helper
+process is started when adb cannot connect. If su prompts the owner
+on first use, the owner must allow it on the phone; Mika root must
+already be granted in KernelSU. If su syntax on this phone turns out
+to differ from the tried variants, the fallback fails silently and
+the phone stays on the manual-toggle path, which is the signal to
+check the su variant, not to widen the command.

@@ -15,6 +15,7 @@ import android.os.Process
 import android.provider.Settings
 import com.wangzan101.mika.core.adb.AdbConnectPort
 import com.wangzan101.mika.core.adb.AdbConnection
+import com.wangzan101.mika.core.adb.AdbConnectionException
 import com.wangzan101.mika.core.adb.ConnectCandidates
 import com.wangzan101.mika.core.adb.AdbPairing
 import com.wangzan101.mika.core.adb.AdbServiceTypes
@@ -183,13 +184,25 @@ class BuiltinShellManager(context: Context, private val hub: HelperHub, private 
             val tls = AndroidAdb.tls(AndroidAdb.identity(app))
             // 助手每次交接前都核对 Mika 的签名
             val command = HelperHandoff.command(app.applicationInfo.sourceDir, app.packageName, Process.myUid(), ownCertPin(app))
-            val connection = connect(tls)
-            // 流开着 sh 就一直等;交接到了(或超时)再关,交接结果仍由引擎从 HelperHub 判断
-            val before = hub.shell.value
-            connection.use {
-                val stream = it.exec(command)
-                stream.write(HelperHandoff.stdinLine(hub.issueLaunchNonce()))
-                withTimeoutOrNull(HANDOFF_WAIT_MS) { hub.shell.first { s -> s != null && s !== before } }
+            try {
+                val connection = connect(tls)
+                // 流开着 sh 就一直等;交接到了(或超时)再关,交接结果仍由引擎从 HelperHub 判断
+                val before = hub.shell.value
+                connection.use {
+                    val stream = it.exec(command)
+                    stream.write(HelperHandoff.stdinLine(hub.issueLaunchNonce()))
+                    withTimeoutOrNull(HANDOFF_WAIT_MS) { hub.shell.first { s -> s != null && s !== before } }
+                }
+            } catch (e: AdbConnectionException) {
+                // Root fallback, muse-brain only: adb could not connect at
+                // all (0 candidates on the owner's phone), so try starting
+                // the same helper via su dropped to shell uid 2000, which
+                // is the only uid HelperHub accepts. Only when paired, so
+                // an unpaired phone never gets a helper this way. If root
+                // also fails, rethrow the original adb exception so the
+                // engine records ConnectFailed and retries as before.
+                if (paired() && RootHelperLauncher.tryLaunch(app, hub, command)) return
+                throw e
             }
         }
 
