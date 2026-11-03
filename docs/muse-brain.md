@@ -1,10 +1,49 @@
-# Muse as external brain (muse-brain branch)
+# External brain (muse-brain branch): any personal assistant as decision layer
 
 Upstream Mika's computer entry points (`mika_run_task`, `/api/v1/tasks`) hand a
 whole goal to the phone, and the phone's own model plans and executes it.
-This branch adds the opposite mode: **the external caller (Muse) decides every
+This branch adds the opposite mode: **an external caller decides every
 step; the phone only executes one screen step at a time and returns the
 observation.** No step on this path goes through `AgentLoop` / `ModelCaller`.
+
+The caller is not tied to Muse. Any personal assistant that can speak HTTP
+JSON and hold the phone's existing token — Muse, Grok, another bot, a custom
+client — can be the decision layer. The protocol carries no assistant
+identity check: the caller optionally self-reports a `client` name
+(`"muse"`, `"grok"`, `"my-bot"`) when opening a session, only so concurrent
+sessions stay distinguishable. Authentication is exactly the upstream
+`RemoteHost` / `RemoteAccess` token scheme, shared with the original API.
+
+## Original API: preserved, not replaced
+
+| Entry point | Status on this branch |
+|---|---|
+| `POST /api/v1/tasks*` and the rest of `RemoteTaskApi` | Unchanged. Still the whole-task route planned by the phone's model. |
+| `/mcp` with `McpTaskTools` (`mika_run_task` and the other 6 tools) | Unchanged. `McpBrainTools` is a separate file, not yet merged into `McpRpc`, so the MCP surface today is byte-for-byte the upstream one. |
+| `GET /api/v1` root capabilities | Original capabilities plus `external_brain` when a brain registry is wired in. Nothing removed. |
+| `GET /api/v1/brain/*` (new) | Additive prefix only. It is routed before the task API only because both share the `/api/v1` prefix; it does not shadow `/tasks`. When no brain registry is supplied, the brain prefix does not appear at all and behaviour is upstream-identical. |
+| Multiple assistants at once | Each `POST /api/v1/brain/sessions` creates an independent session (own UUID, own frozen tool list, own step count). `GET /api/v1/brain/sessions` lists live sessions with their `client` so one assistant never has to guess or reuse another's session. Closing one session does not touch the others, and never touches a running `/tasks` job. |
+
+Generic example (any assistant, same token scheme as the original API):
+
+```bash
+# 1. Check the patched build advertises external_brain (original root endpoint)
+curl -H "Authorization: Bearer $MIKA_TOKEN" http://PHONE:8765/api/v1
+
+# 2. Open a session as Grok (client is self-reported, optional)
+curl -X POST -H "Authorization: Bearer $MIKA_TOKEN" -H "Content-Type: application/json" \
+  -d '{"goal":"打开设置，查看 WLAN 状态","client":"grok"}' \
+  http://PHONE:8765/api/v1/brain/sessions
+
+# 3. One step at a time, decided by the caller
+curl -X POST -H "Authorization: Bearer $MIKA_TOKEN" -H "Content-Type: application/json" \
+  -d '{"tool":"phone_observe","arguments":{}}' \
+  http://PHONE:8765/api/v1/brain/sessions/<session_id>/step
+
+# 4. Original API still works in parallel, unchanged
+curl -X POST -H "Authorization: Bearer $MIKA_TOKEN" -H "Content-Type: application/json" \
+  -d '{"goal":"..."}' http://PHONE:8765/api/v1/tasks
+```
 
 ## What this branch contains
 
