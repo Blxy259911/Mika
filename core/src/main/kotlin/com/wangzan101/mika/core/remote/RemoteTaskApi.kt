@@ -20,6 +20,8 @@ class RemoteTaskApi(
     private val service: RemoteTaskService,
     private val serverVersion: String,
     private val device: DeviceAccess? = null,
+    /** 外部大脑已接线时才在根 capabilities 里出现 external_brain;未接线时绝不冒充。 */
+    private val brainEnabled: Boolean = false,
 ) {
     fun handle(req: HttpRequest): HttpResponse = try {
         req.header("accept")?.lowercase()?.let {
@@ -47,7 +49,7 @@ class RemoteTaskApi(
             method(req, "GET")
             return ok(buildJsonObject {
                 put("api_version", 1); put("server_version", serverVersion)
-                putJsonArray("capabilities") { add("tasks"); add("task_steer"); add("task_recovery"); if (device != null) add("device_state") }
+                putJsonArray("capabilities") { add("tasks"); add("task_steer"); add("task_recovery"); if (device != null) add("device_state"); if (brainEnabled) add("external_brain") }
                 putJsonObject("limits") {
                     put("max_wait_s", RemoteTaskService.MAX_WAIT_S)
                     put("max_goal", RemoteTaskService.MAX_GOAL)

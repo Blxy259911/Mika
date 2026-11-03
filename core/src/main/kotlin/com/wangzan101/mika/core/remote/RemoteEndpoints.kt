@@ -1,5 +1,6 @@
 package com.wangzan101.mika.core.remote
 
+import com.wangzan101.mika.core.brain.ExternalBrainSessions
 import com.wangzan101.mika.core.device.DeviceAccess
 import com.wangzan101.mika.core.mcp.McpRpc
 import com.wangzan101.mika.core.mcp.McpTaskTools
@@ -14,7 +15,11 @@ import java.net.InetAddress
  * 而不是出现了再拒绝。经网关来的请求默认不给,见 docs/dev/remote-mcp.md。
  */
 class RemoteEndpoints(tasks: RemoteTasks, private val serverVersion: String, private val clock: () -> Long = System::currentTimeMillis,
-    device: DeviceAccess? = null) {
+    device: DeviceAccess? = null,
+    /** 外部大脑会话注册表;为 null 时 brain 入口根本不出现(不是出现了再拒绝)。
+     * 由 App 侧在组装好 McpServer(ToolDispatcher 工厂)后传入;见 docs/muse-brain.md。
+     * MCP 的 mika_brain_* 工具尚未并入 McpRpc(它目前只认 McpTaskTools),HTTP brain 接口是本分支的首要入口。 */
+    private val brain: ExternalBrainSessions? = null) {
     private val service = RemoteTaskService(tasks)
     private val clients = LinkedHashMap<String, Long>()
     private val mutable = MutableStateFlow(RemoteActivity())
@@ -22,7 +27,8 @@ class RemoteEndpoints(tasks: RemoteTasks, private val serverVersion: String, pri
 
     /** 一套协议入口:任务 API 加 MCP。两套只差带不带手机屏幕能力,任务服务和近期活动共用。 */
     private inner class Surface(device: DeviceAccess?) {
-        val api = RemoteTaskApi(service, serverVersion, device)
+        val api = RemoteTaskApi(service, serverVersion, device, brainEnabled = brain != null)
+        val brainApi = brain?.let { ExternalBrainApi(it, clock) }
         val rpc = McpRpc(McpTaskTools(service, device), serverVersion) { remote, name -> seen(remote, name) }
     }
     private val withDevice = Surface(device)
@@ -32,6 +38,12 @@ class RemoteEndpoints(tasks: RemoteTasks, private val serverVersion: String, pri
     fun handle(req: HttpRequest, deviceAccess: Boolean = true): HttpResponse {
         val surface = if (deviceAccess) withDevice else tasksOnly
         if (req.path == McpRpc.PATH) return surface.rpc.handle(req)
+        // brain 路径必须在任务 API 之前分发:它同样以 /api/v1 开头,任务路由会把它当成不存在的任务端点。
+        val brainApi = surface.brainApi
+        if (brainApi != null && (req.path == ExternalBrainApi.ROOT || req.path.startsWith("${ExternalBrainApi.ROOT}/"))) {
+            seen(req.remote, req.header("x-mika-client")?.take(64))
+            return brainApi.handle(req)
+        }
         if (req.path == RemoteTaskApi.ROOT || req.path.startsWith("${RemoteTaskApi.ROOT}/")) {
             seen(req.remote, req.header("x-mika-client")?.take(64))
             return surface.api.handle(req)
