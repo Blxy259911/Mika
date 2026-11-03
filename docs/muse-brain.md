@@ -69,12 +69,12 @@ curl -X POST -H "Authorization: Bearer $MIKA_TOKEN" -H "Content-Type: applicatio
   currently only accepts `McpTaskTools`, so these tools are not yet exposed
   over `/mcp`; HTTP is the primary entry point on this branch.
 
-## What is still required in the app layer (not done on this branch)
+## App-layer wiring: landed locally, not yet verified on a build
 
-`McpRuntime` does not currently pass a brain registry to the remote layer,
-so `RemoteEndpoints(brain = …)` cannot yet be constructed from existing app
-code — and this is NOT a one-line change, for a structural reason found
-when the wiring was attempted (2026-11-03):
+The screen supplier described below is implemented locally on this branch
+(it has NOT been pushed yet, and it has NOT been compiled — see the
+verification gap at the end of this section). It is not a one-line change,
+for a structural reason found when the wiring was attempted (2026-11-03):
 
 - Upstream production code never constructs `McpServer` at all; it exists
   only in `McpServerTest` with a `FakeScreen`. There is no existing
@@ -84,24 +84,77 @@ when the wiring was attempted (2026-11-03):
   `AppAccessScreenPort`) is built per `TaskRun` inside `TaskRun.execute`
   (`connectPhone()`), with a `ResourceScope` lifecycle tied to that task.
   `McpRuntime` only holds `tasks` and `device.access`; it has no screen.
-- Therefore the correct wiring is a refactor, not a parameter pass:
-  extract the phone-side setup from `TaskRun` into a reusable component
-  whose lifecycle is tied to a brain session (open: connect helper +
-  accessibility + virtual display; close: release them, as a task does),
-  then build `McpServer` from `toolDispatcher(thatScreen, runSpec = spec)`
-  and pass `ExternalBrainSessions(server)` into `RemoteEndpoints`.
-  Do NOT fake this with a dummy screen, and do NOT reuse a running task's
-  dispatcher: a live `AgentLoop` and a brain session would fight over the
-  same screen.
-- Plumbing step already landed: `McpRuntime` now accepts an optional
-  `brain: ExternalBrainSessions? = null` and forwards it to
-  `RemoteEndpoints`. The default is null, so with no supplier the brain
-  API stays off and existing callers (single `McpRuntime` construction
-  in `MikaApp`) are unchanged. What remains is the screen supplier
-  described above; plumbing alone does not make `external_brain` appear.
+
+What landed (local only, unpushed):
+
+- `app/.../mcp/BrainPhone.kt` (new): the real phone supplier. It mirrors
+  `TaskRun.connectPhone` step for step — `PhoneServices.sharedShell`,
+  `AccessibilityRepair.awaitService`, `TaskRecovery.beginRun`,
+  `LazyAgentDisplay` / `AgentDisplay`, `AndroidScreen`,
+  `AppAccessScreenPort`, `AppMuter` (launch-time mute only) — and builds
+  `toolDispatcher(accessedPhone, runSpec = spec)` per session. No dummy
+  screen, no `FakeScreen`, and it never reuses a running `TaskRun`'s
+  dispatcher.
+- Timing follows `McpServer`'s contract: `assemble: (RunSpec) -> ToolDispatcher`
+  is not suspend, so it only builds the `LazyPhoneScreen` /
+  `AppAccessScreenPort` / dispatcher. The phone is actually connected on
+  the first phone-needing tool call, when `LazyPhoneScreen` suspend-acquires
+  via `connectPhone`, exactly as a task connects on first `launch_app` /
+  system command. Read-only screen tools before that behave as in a task
+  (empty screen / `no_app_open`), they do not force a connection.
+- Lifecycle follows a task's cleanup: each brain session
+  (`McpToolSession`'s `RunSpec.id`) gets its own `BrainSession` with its
+  own `ResourceScope`, virtual display and `TaskRecovery` registration.
+  `ExternalBrainSessions` gained an optional, default-null `onClose`
+  hook (the only core change in this step; existing callers and core
+  tests are unaffected) so closing a session releases, in task order:
+  display apps (`AppsAfterTaskEnd`), mute restore, `TaskRecovery.endRun`,
+  `ResourceScope.close` (virtual display), `sharedShell.release`, and
+  the package-reservation owner. A failed connect releases the shell
+  occupation and recovery registration it already took, so a retry does
+  not double-occupy the shared shell. A session that never connected
+  releases nothing but an empty scope.
+- Package reservations use the same `MikaApp.resources` table that
+  `TaskCenter` uses, with the holder check extended to live brain
+  sessions and live tasks, so a brain session and an ordinary task
+  cannot silently grab the same app from each other. A second virtual
+  display that cannot be created is reported as `PhoneUnavailable`
+  (existing `parallel_second_display_failed` text) for that tool call
+  and retried on the next call; there is no queueing, and the session
+  itself is not invalidated by it.
+- `MikaApp` now wires it in: `brainPhone` is built lazily from
+  `MikaApp` + `remoteTasks` (the `McpTaskHost`), and `mcp` passes
+  `brain = brainPhone.brain` to `McpRuntime`, which forwards it to
+  `RemoteEndpoints`. That is what makes `/api/v1/brain` and the
+  `external_brain` root capability appear on a build from this branch.
+  `McpRuntime`'s default is still null, so callers that pass nothing
+  keep upstream behaviour.
+- Deliberate limits of this wiring, stated plainly: it provides phone
+  tools only (no `WebPort`, so no `web_*` tools yet, although the core
+  allow-list still admits the `web_*` prefix); it does not publish PiP
+  frames and does not run `TaskRun`'s `watchTarget` auto-mute for apps
+  that appear without being launched; and it has no takeover state, so
+  `AndroidScreen.handedOver` is always false — a brain session assumes
+  the user is not simultaneously operating the main screen.
 - Likewise, exposing `mika_brain_*` over MCP requires merging the brain
   tools into `McpRpc`'s tool set; do not hack it by renaming brain steps
   as tasks.
+
+Verification gap — read this before claiming anything works:
+
+- The existing `.github/workflows/core-test.yml` only runs `:core:test`.
+  It covers the core `onClose` change (default null, existing tests
+  unchanged) once pushed, but it does NOT compile the app module, so
+  `BrainPhone.kt`, the `MikaApp` wiring and the `McpRuntime` comment
+  change are not covered by it.
+- The author's sandbox has no Android SDK and cannot run Gradle at all
+  (see the core-verification note below), so the app module has NOT
+  been compiled locally either. Do NOT claim the app wiring compiles
+  until `./gradlew :app:assembleDebug` (or at least
+  `:app:compileDebugKotlin`) has run on a machine with an Android SDK,
+  or the workflow has been extended to cover it. The signatures used
+  here were checked by reading the source files listed in the wiring
+  notes, not by a compiler.
 
 Core-level verification on this branch (no Android device needed):
 `core/src/test/.../brain/ExternalBrainSessionsTest.kt` covers, on a
@@ -122,8 +175,9 @@ Before any release build, run the upstream development checks
 and the Python tests under `tools/mika/tests`). This branch has not yet
 been through those checks on a real device; do not ship it as verified
 until they pass, and do not install it on a phone as if the brain entry
-point were live — it will not appear until the app-layer refactor above
-lands and a build is produced from it.
+point were live — the app-layer wiring above is implemented locally but
+unpushed and uncompiled, so it will not appear until it is pushed, its
+app-module compilation is verified, and a build is produced from it.
 
 ## Autonomous mode for the owner's own Android (user instruction, 2026-11-03)
 
