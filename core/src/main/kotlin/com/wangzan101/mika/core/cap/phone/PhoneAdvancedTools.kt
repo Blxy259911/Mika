@@ -344,4 +344,35 @@ internal object PhoneCommand : PhoneTool {
     }
 }
 
+
+/**
+ * 以 root 身份执行命令;muse-brain 专用。
+ * 与 phone_system_command 的区别:那条走 shell 助手(uid 2000),这条不走助手,
+ * 直接经 Mika 应用进程调 su,前提是机主已在 KernelSU/Magisk 里给 Mika 授过 root。
+ * 不要求先打开 App、不要求虚拟屏,空命令、超时、su 不可用时都原样报错,不换路重试。
+ * 只在外部大脑会话里由机主明确指令时使用;Mika 自身不凭空发明 root 命令。
+ */
+internal object PhoneRootCommand : PhoneTool {
+    override val verb = Verb.PhoneCommand
+    override val risk = Risk.Write
+    override val offScreen = true
+    override val label = "root 命令"
+    override val def = ToolDef("phone_root_command", Prompts.tool("phone_root_command"), mapOf(
+        "command" to str("Shell command to run as root (uid 0)."),
+        "timeoutMs" to int("Maximum wait in milliseconds, 1000-60000 (default 30000).", 1000, 60000),
+    ), listOf("command"))
+
+    override suspend fun execute(a: Args, ctx: ToolContext): ToolExecution {
+        val command = a.str("command", max = 4_000)!!
+        if (command.isBlank()) return ToolExecution(buildJsonObject { put("ok", false); put("error", "empty_command") })
+        val timeout = (a.int("timeoutMs", 1000, 60000) ?: 30000).toLong()
+        val result = ctx.screen.rootCommand(command, timeout)
+            ?: return ToolExecution(buildJsonObject { put("ok", false); put("error", "root_unavailable") })
+        return ToolExecution(buildJsonObject {
+            put("ok", result.exitCode == 0); put("exitCode", result.exitCode)
+            put("output", Untrusted.wrapWithin(result.output, 65_536))
+        })
+    }
+}
+
 private fun fail(error: String) = ToolExecution(buildJsonObject { put("ok", false); put("error", error) })

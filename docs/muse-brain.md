@@ -289,3 +289,16 @@ already be granted in KernelSU. If su syntax on this phone turns out
 to differ from the tried variants, the fallback fails silently and
 the phone stays on the manual-toggle path, which is the signal to
 check the su variant, not to widen the command.
+
+## Root commands (muse-brain only, 2026-11-04)
+
+New tool `phone_root_command` runs one command as root (uid 0) from Mika's
+own app process via su. It does not go through the shell helper, because
+the helper must stay shell uid 2000 and a root-started helper is rejected.
+It does not require an app to be open or a virtual display to exist.
+Prerequisite, unchanged from the earlier root work: the phone owner must
+already have granted Mika root in KernelSU or Magisk; the first su call
+may show a prompt on the main screen that only the owner can allow.
+If su is unavailable or denied, the tool returns `root_unavailable` or the
+su result as-is; it never falls back to the shell helper and never retries
+with another su binary after one su binary has actually run.

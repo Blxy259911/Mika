@@ -291,6 +291,12 @@ interface ScreenPort {
         listOfNotNull(nextEvent(kind, packageName, durationMs))
     /** 直接经任务持有的 shell 助手执行命令。 */
     suspend fun systemCommand(command: String): SystemCommandResult? = null
+    /**
+     * 经 Mika 应用进程以 root 身份执行命令,不走 shell 助手。
+     * 只有显式实现了它的端口才支持;默认返回 null,调用方据此报 root_unavailable。
+     * 助手本身的身份不受影响:助手仍以 shell 身份运行,root 只用在这一次命令上。
+     */
+    suspend fun rootCommand(command: String, timeoutMs: Long): SystemCommandResult? = null
     suspend fun listApps(): List<Pair<String, String>> // 包名, 显示名
 
     /** 也装在这台手机另一份用户里(分身、工作资料等)的 App:包名 → 那几份用户的名字。查不到或不支持时为空。 */

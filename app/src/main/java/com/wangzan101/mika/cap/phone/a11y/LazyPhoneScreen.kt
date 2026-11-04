@@ -108,6 +108,15 @@ class LazyPhoneScreen(
         screen.ensureDisplay()
         return screen.systemCommand(command)
     }
+    /**
+     * Root commands do not need a display or an open app: they run in
+     * Mika's own app process via su, so they must not go through built().
+     */
+    override suspend fun rootCommand(command: String, timeoutMs: Long): SystemCommandResult? {
+        val result = com.wangzan101.mika.cap.phone.setup.RootCommandRunner.run(command, timeoutMs)
+            ?: return null
+        return SystemCommandResult(result.exitCode, result.output)
+    }
     override suspend fun listApps(): List<Pair<String, String>> = port?.listApps() ?: listApps.invoke()
     // 要问内置助手:没接上之前不为它去接(接不上会请用户设置),打开过 App 之后才有
     override suspend fun otherProfiles(): Map<String, List<String>> = port?.otherProfiles() ?: emptyMap()
