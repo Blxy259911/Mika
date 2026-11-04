@@ -375,4 +375,92 @@ internal object PhoneRootCommand : PhoneTool {
     }
 }
 
+/**
+ * 主屏解锁;muse-brain 专用。
+ * 凭据只在这一次调用里存在:工具层转成 CharArray 交给端口,用完立即清零,
+ * 返回值里只有 ok/unlocked,不回显、不记录凭据本身。已解锁时直接返回 unlocked=true,
+ * 不重复输密码。助手 shell 或无障碍没接上时返回 unlock_failed,不换路重试。
+ */
+internal object PhoneUnlock : PhoneTool {
+    override val verb = Verb.PhoneCommand
+    override val risk = Risk.Write
+    override val offScreen = true
+    override val logged = false
+    override val label = "解锁"
+    override val def = ToolDef("phone_unlock", Prompts.tool("phone_unlock"), mapOf(
+        "credential" to str("Lock screen PIN (4-16 digits) or password (4-64 printable characters). Used once for this call only, never stored or echoed back."),
+        "kind" to str("pin (default) or password."),
+    ), listOf("credential"))
+
+    override suspend fun execute(a: Args, ctx: ToolContext): ToolExecution {
+        val credential = a.str("credential", max = 64) ?: return fail("missing_credential")
+        val kind = (a.str("kind") ?: "pin").lowercase()
+        if (kind != "pin" && kind != "password") return fail("invalid_kind")
+        if (kind == "pin" && (credential.length !in 4..16 || !credential.all { it in '0'..'9' })) return fail("invalid_pin")
+        if (kind == "password" && (credential.length !in 4..64 || !credential.all { it in ' '..'~' })) return fail("invalid_password")
+        val chars = credential.toCharArray()
+        try {
+            val unlocked = ctx.screen.unlockDevice(kind, chars)
+            return ToolExecution(buildJsonObject { put("ok", unlocked); put("unlocked", unlocked) })
+        } finally {
+            chars.fill('\u0000')
+        }
+    }
+}
+
+/** 打开拨号盘并填好号码(ACTION_DIAL);不直接拨出,拨出仍需在拨号盘上点一次。 */
+internal object PhoneDial : PhoneTool {
+    override val verb = Verb.PhoneCommand
+    override val risk = Risk.Write
+    override val offScreen = true
+    override val label = "拨号"
+    override val def = ToolDef("phone_dial", Prompts.tool("phone_dial"), mapOf(
+        "number" to str("Phone number to dial, digits with optional leading +, * or #, 3-20 characters."),
+    ), listOf("number"))
+
+    override suspend fun execute(a: Args, ctx: ToolContext): ToolExecution {
+        val number = a.str("number", max = 20)?.trim() ?: return fail("missing_number")
+        if (!NUMBER.matches(number)) return fail("invalid_number")
+        val opened = ctx.screen.dialNumber(number)
+        return ToolExecution(buildJsonObject { put("ok", opened); put("dialerOpened", opened) })
+    }
+
+    private companion object {
+        val NUMBER = Regex("^\\+?[0-9*#]{3,20}$")
+    }
+}
+
+/** 解锁 + 打开拨号盘填号,一次调用做完两步;拨出仍需在拨号盘上点一次。凭据处理同 phone_unlock。 */
+internal object PhoneUnlockAndDial : PhoneTool {
+    override val verb = Verb.PhoneCommand
+    override val risk = Risk.Write
+    override val offScreen = true
+    override val logged = false
+    override val label = "解锁并拨号"
+    override val def = ToolDef("phone_unlock_and_dial", Prompts.tool("phone_unlock_and_dial"), mapOf(
+        "credential" to str("Lock screen PIN (4-16 digits) or password (4-64 printable characters). Used once for this call only, never stored or echoed back."),
+        "kind" to str("pin (default) or password."),
+        "number" to str("Phone number to dial, digits with optional leading +, * or #, 3-20 characters."),
+    ), listOf("credential", "number"))
+
+    override suspend fun execute(a: Args, ctx: ToolContext): ToolExecution {
+        val credential = a.str("credential", max = 64) ?: return fail("missing_credential")
+        val kind = (a.str("kind") ?: "pin").lowercase()
+        if (kind != "pin" && kind != "password") return fail("invalid_kind")
+        if (kind == "pin" && (credential.length !in 4..16 || !credential.all { it in '0'..'9' })) return fail("invalid_pin")
+        if (kind == "password" && (credential.length !in 4..64 || !credential.all { it in ' '..'~' })) return fail("invalid_password")
+        val number = a.str("number", max = 20)?.trim() ?: return fail("missing_number")
+        if (!Regex("^\\+?[0-9*#]{3,20}$").matches(number)) return fail("invalid_number")
+        val chars = credential.toCharArray()
+        try {
+            val unlocked = ctx.screen.unlockDevice(kind, chars)
+            if (!unlocked) return ToolExecution(buildJsonObject { put("ok", false); put("unlocked", false); put("dialerOpened", false) })
+            val opened = ctx.screen.dialNumber(number)
+            return ToolExecution(buildJsonObject { put("ok", opened); put("unlocked", true); put("dialerOpened", opened) })
+        } finally {
+            chars.fill('\u0000')
+        }
+    }
+}
+
 private fun fail(error: String) = ToolExecution(buildJsonObject { put("ok", false); put("error", error) })

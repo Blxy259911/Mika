@@ -297,6 +297,16 @@ interface ScreenPort {
      * 助手本身的身份不受影响:助手仍以 shell 身份运行,root 只用在这一次命令上。
      */
     suspend fun rootCommand(command: String, timeoutMs: Long): SystemCommandResult? = null
+    /**
+     * 主屏解锁:唤醒、关锁屏页、往 SystemUI 锁屏框里输一次凭据。凭据只在这一次调用里存在,
+     * 调用方负责用完清零,工具层不回显、不记录。默认不支持,调用方据此报 unlock_unavailable。
+     */
+    suspend fun unlockDevice(kind: String, credential: CharArray): Boolean = false
+    /**
+     * 打开拨号盘并填好号码(ACTION_DIAL,不直接拨出,拨出仍需在拨号盘上点一次)。
+     * 默认不支持,调用方据此报 dial_unavailable。
+     */
+    suspend fun dialNumber(number: String): Boolean = false
     suspend fun listApps(): List<Pair<String, String>> // 包名, 显示名
 
     /** 也装在这台手机另一份用户里(分身、工作资料等)的 App:包名 → 那几份用户的名字。查不到或不支持时为空。 */

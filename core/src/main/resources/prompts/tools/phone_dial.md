@@ -1,0 +1,1 @@
+Open the dialer with the given number prefilled (ACTION_DIAL). This does not place the call by itself: placing the call still needs one tap on the dialer, for example the SIM button, which the caller does as the next step. Use it only for a number the caller explicitly named. Do not invent numbers, do not use it for payments or confirmations.
