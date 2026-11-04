@@ -1,7 +1,9 @@
 package com.wangzan101.mika.mcp
 
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.hardware.display.DisplayManager
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.os.RemoteException
@@ -12,6 +14,9 @@ import com.wangzan101.mika.MikaApp
 import com.wangzan101.mika.R
 import com.wangzan101.mika.cap.phone.PhoneServices
 import com.wangzan101.mika.cap.phone.a11y.AndroidScreen
+import com.wangzan101.mika.core.device.CredentialKind
+import com.wangzan101.mika.core.device.DeviceCredential
+import com.wangzan101.mika.device.AndroidDeviceAccessPort
 import com.wangzan101.mika.cap.phone.a11y.AppCopyReader
 import com.wangzan101.mika.cap.phone.a11y.LazyPhoneScreen
 import com.wangzan101.mika.cap.phone.a11y.PhoneUnavailable
@@ -119,6 +124,34 @@ class BrainPhone(
                         runCatching { AppCopyReader.read(s, launchableApps(app.packageManager, app.packageName)) }.getOrNull()
                     }
                 }.orEmpty()
+            },
+            deviceUnlock = { kind, chars ->
+                // LazyPhoneScreen.unlockDevice 已先确保接上 shell,此处 session.shell 不为空才继续。
+                val shell = session.shell
+                if (shell == null) false else withContext(Dispatchers.IO) {
+                    val port = AndroidDeviceAccessPort(app) { session.shell }
+                    val state = runCatching { port.state() }.getOrNull()
+                    if (state?.ready == true) true else {
+                        var ok = runCatching { port.wake() }.getOrDefault(false)
+                        if (ok) ok = runCatching { port.dismiss() }.getOrDefault(false)
+                        if (ok) {
+                            val credentialKind = if (kind == "password") CredentialKind.Password else CredentialKind.Pin
+                            val credential = DeviceCredential(credentialKind, chars)
+                            try { runCatching { port.enter(credential) }.getOrDefault(false) } finally { credential.close() }
+                        } else false
+                    }
+                }
+            },
+            dial = { number ->
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number")).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        app.startActivity(intent)
+                        true
+                    }.getOrDefault(false)
+                }
             }) { connectPhone(session) }
         session.lazyScreen = lazyScreen
         val accessed = AppAccessScreenPort(

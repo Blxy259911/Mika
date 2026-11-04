@@ -302,3 +302,33 @@ may show a prompt on the main screen that only the owner can allow.
 If su is unavailable or denied, the tool returns `root_unavailable` or the
 su result as-is; it never falls back to the shell helper and never retries
 with another su binary after one su binary has actually run.
+
+## Unlock and dial tools (muse-brain only, 2026-11-04)
+
+New tools `phone_unlock`, `phone_dial` and `phone_unlock_and_dial` turn
+repeated phone operations into single brain calls, instead of a chain of
+observe / system-command / tap steps.
+
+- `phone_unlock` wakes the device, dismisses the keyguard and enters the
+  lock screen credential once, through the existing main-screen SystemUI
+  path (the same path Mika's own device-access flow uses). The credential
+  exists only for this one call: the tool converts it to a CharArray,
+  passes it to the port, and zeroes it in a finally block; the result
+  contains only ok/unlocked, never the credential, and the tool is not
+  logged. If the device is already unlocked it returns unlocked without
+  entering anything. A failed credential is not retried.
+- `phone_dial` opens the dialer with the named number prefilled
+  (ACTION_DIAL). Mika does not declare CALL_PHONE, so this does not place
+  the call by itself: placing the call still needs one tap on the dialer
+  (for example the SIM button), done as the next step by the caller.
+- `phone_unlock_and_dial` does both in one call, with the same credential
+  and dial rules as above.
+
+Implementation follows the root-command pattern: new methods on
+ScreenPort (`unlockDevice`, `dialNumber`, default unsupported), pass-through
+in AppAccessScreenPort, overrides in LazyPhoneScreen that do not require a
+virtual display or an open app (unlock first ensures the shell helper is
+connected, dial runs from Mika's app process), and lambdas wired in
+BrainPhone.assemble. No new Android permission is declared, and no
+credential is stored in Mika settings: unlike Mika's own device-access
+store, the brain unlock tool never persists a credential.
