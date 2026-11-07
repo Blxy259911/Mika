@@ -344,4 +344,123 @@ internal object PhoneCommand : PhoneTool {
     }
 }
 
+
+/**
+ * 以 root 身份执行命令;muse-brain 专用。
+ * 与 phone_system_command 的区别:那条走 shell 助手(uid 2000),这条不走助手,
+ * 直接经 Mika 应用进程调 su,前提是机主已在 KernelSU/Magisk 里给 Mika 授过 root。
+ * 不要求先打开 App、不要求虚拟屏,空命令、超时、su 不可用时都原样报错,不换路重试。
+ * 只在外部大脑会话里由机主明确指令时使用;Mika 自身不凭空发明 root 命令。
+ */
+internal object PhoneRootCommand : PhoneTool {
+    override val verb = Verb.PhoneCommand
+    override val risk = Risk.Write
+    override val offScreen = true
+    override val label = "root 命令"
+    override val def = ToolDef("phone_root_command", Prompts.tool("phone_root_command"), mapOf(
+        "command" to str("Shell command to run as root (uid 0)."),
+        "timeoutMs" to int("Maximum wait in milliseconds, 1000-60000 (default 30000).", 1000, 60000),
+    ), listOf("command"))
+
+    override suspend fun execute(a: Args, ctx: ToolContext): ToolExecution {
+        val command = a.str("command", max = 4_000)!!
+        if (command.isBlank()) return ToolExecution(buildJsonObject { put("ok", false); put("error", "empty_command") })
+        val timeout = (a.int("timeoutMs", 1000, 60000) ?: 30000).toLong()
+        val result = ctx.screen.rootCommand(command, timeout)
+            ?: return ToolExecution(buildJsonObject { put("ok", false); put("error", "root_unavailable") })
+        return ToolExecution(buildJsonObject {
+            put("ok", result.exitCode == 0); put("exitCode", result.exitCode)
+            put("output", Untrusted.wrapWithin(result.output, 65_536))
+        })
+    }
+}
+
+/**
+ * 主屏解锁;muse-brain 专用。
+ * 凭据只在这一次调用里存在:工具层转成 CharArray 交给端口,用完立即清零,
+ * 返回值里只有 ok/unlocked,不回显、不记录凭据本身。已解锁时直接返回 unlocked=true,
+ * 不重复输密码。助手 shell 或无障碍没接上时返回 unlock_failed,不换路重试。
+ */
+internal object PhoneUnlock : PhoneTool {
+    override val verb = Verb.PhoneCommand
+    override val risk = Risk.Write
+    override val offScreen = true
+    override val logged = false
+    override val label = "解锁"
+    override val def = ToolDef("phone_unlock", Prompts.tool("phone_unlock"), mapOf(
+        "credential" to str("Lock screen PIN (4-16 digits) or password (4-64 printable characters). Used once for this call only, never stored or echoed back."),
+        "kind" to str("pin (default) or password."),
+    ), listOf("credential"))
+
+    override suspend fun execute(a: Args, ctx: ToolContext): ToolExecution {
+        val credential = a.str("credential", max = 64) ?: return fail("missing_credential")
+        val kind = (a.str("kind") ?: "pin").lowercase()
+        if (kind != "pin" && kind != "password") return fail("invalid_kind")
+        if (kind == "pin" && (credential.length !in 4..16 || !credential.all { it in '0'..'9' })) return fail("invalid_pin")
+        if (kind == "password" && (credential.length !in 4..64 || !credential.all { it in ' '..'~' })) return fail("invalid_password")
+        val chars = credential.toCharArray()
+        try {
+            val unlocked = ctx.screen.unlockDevice(kind, chars)
+            return ToolExecution(buildJsonObject { put("ok", unlocked); put("unlocked", unlocked) })
+        } finally {
+            chars.fill('\u0000')
+        }
+    }
+}
+
+/** 打开拨号盘并填好号码(ACTION_DIAL);不直接拨出,拨出仍需在拨号盘上点一次。 */
+internal object PhoneDial : PhoneTool {
+    override val verb = Verb.PhoneCommand
+    override val risk = Risk.Write
+    override val offScreen = true
+    override val label = "拨号"
+    override val def = ToolDef("phone_dial", Prompts.tool("phone_dial"), mapOf(
+        "number" to str("Phone number to dial, digits with optional leading +, * or #, 3-20 characters."),
+    ), listOf("number"))
+
+    override suspend fun execute(a: Args, ctx: ToolContext): ToolExecution {
+        val number = a.str("number", max = 20)?.trim() ?: return fail("missing_number")
+        if (!NUMBER.matches(number)) return fail("invalid_number")
+        val opened = ctx.screen.dialNumber(number)
+        return ToolExecution(buildJsonObject { put("ok", opened); put("dialerOpened", opened) })
+    }
+
+    private companion object {
+        val NUMBER = Regex("^\\+?[0-9*#]{3,20}$")
+    }
+}
+
+/** 解锁 + 打开拨号盘填号,一次调用做完两步;拨出仍需在拨号盘上点一次。凭据处理同 phone_unlock。 */
+internal object PhoneUnlockAndDial : PhoneTool {
+    override val verb = Verb.PhoneCommand
+    override val risk = Risk.Write
+    override val offScreen = true
+    override val logged = false
+    override val label = "解锁并拨号"
+    override val def = ToolDef("phone_unlock_and_dial", Prompts.tool("phone_unlock_and_dial"), mapOf(
+        "credential" to str("Lock screen PIN (4-16 digits) or password (4-64 printable characters). Used once for this call only, never stored or echoed back."),
+        "kind" to str("pin (default) or password."),
+        "number" to str("Phone number to dial, digits with optional leading +, * or #, 3-20 characters."),
+    ), listOf("credential", "number"))
+
+    override suspend fun execute(a: Args, ctx: ToolContext): ToolExecution {
+        val credential = a.str("credential", max = 64) ?: return fail("missing_credential")
+        val kind = (a.str("kind") ?: "pin").lowercase()
+        if (kind != "pin" && kind != "password") return fail("invalid_kind")
+        if (kind == "pin" && (credential.length !in 4..16 || !credential.all { it in '0'..'9' })) return fail("invalid_pin")
+        if (kind == "password" && (credential.length !in 4..64 || !credential.all { it in ' '..'~' })) return fail("invalid_password")
+        val number = a.str("number", max = 20)?.trim() ?: return fail("missing_number")
+        if (!Regex("^\\+?[0-9*#]{3,20}$").matches(number)) return fail("invalid_number")
+        val chars = credential.toCharArray()
+        try {
+            val unlocked = ctx.screen.unlockDevice(kind, chars)
+            if (!unlocked) return ToolExecution(buildJsonObject { put("ok", false); put("unlocked", false); put("dialerOpened", false) })
+            val opened = ctx.screen.dialNumber(number)
+            return ToolExecution(buildJsonObject { put("ok", opened); put("unlocked", true); put("dialerOpened", opened) })
+        } finally {
+            chars.fill('\u0000')
+        }
+    }
+}
+
 private fun fail(error: String) = ToolExecution(buildJsonObject { put("ok", false); put("error", error) })
