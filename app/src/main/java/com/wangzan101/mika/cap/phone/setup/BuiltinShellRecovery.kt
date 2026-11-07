@@ -31,6 +31,7 @@ import com.wangzan101.mika.core.shell.RecoveryPermissions
 import com.wangzan101.mika.core.shell.RecoveryPolicy
 import com.wangzan101.mika.core.shell.RestoreOutcome
 import com.wangzan101.mika.core.shell.ShellCommandRunner
+import com.wangzan101.mika.settings.FeatureFlags
 import com.wangzan101.mika.settings.RecoverySettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +42,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -74,6 +76,7 @@ class BuiltinShellRecovery(
         restart = { gap -> if (canWriteSecure()) restartDirectly(gap) else permissions.restartAccessibility(gap) },
         consent = { settings.consent.value },
         direct = ::canWriteSecure,
+        allowed = { !FeatureFlags.get(app).quitRequested() },
     )
 
     private fun canWriteSecure() =
@@ -122,7 +125,8 @@ class BuiltinShellRecovery(
     fun start() {
         if (started) return
         started = true
-        scope.launch { permissions.applyWhenRunning(control.status) }
+        val active = FeatureFlags.get(app).quitChanges().map { !it }
+        scope.launch { permissions.applyWhenRunning(control.status, active) }
         // Root grant, muse-brain only: if Mika does not hold
         // WRITE_SECURE_SETTINGS yet, try to grant it to Mika itself via su.
         // This is the same permission the helper-shell path already asks for;
@@ -160,7 +164,7 @@ class BuiltinShellRecovery(
             }
         }
         scope.launch { service.collect { if (it.connected) settings.accessibilitySeen = true } }
-        scope.launch { accessibilityRepair.watch(service, control.status, userUnlocked) }
+        scope.launch { accessibilityRepair.watch(service, control.status, userUnlocked, active) }
     }
 
     /**
@@ -213,8 +217,9 @@ class BuiltinShellRecovery(
 
     /** 开机后按已生效的「重启后自动恢复」重新打开无线调试并重起助手;不需要动手时返回 null。 */
     suspend fun restoreAfterBoot(): RestoreOutcome? {
-        // 没配对过(助手是电脑经 USB 起的):Mika 自己起不来助手,不去动无线调试
-        if (!control.paired) return null
+        // 没配对过(助手是电脑经 USB 起的):Mika 自己起不来助手,不去动无线调试;
+        // 用 root 启动时看门狗经 su 起助手,也不去动无线调试
+        if (!control.paired || control.rootStart) return null
         val holds = app.checkSelfPermission(PermissionCommands.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
         when (BootRestore.gate(Build.VERSION.SDK_INT, settings.consent.value, holds)) {
             BootRestore.Gate.Skip -> return null

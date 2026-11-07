@@ -20,6 +20,10 @@ import com.wangzan101.mika.core.shell.HelperHandoff
 import com.wangzan101.mika.device.AndroidDeviceAccess
 import com.wangzan101.mika.core.brain.ExternalBrainSessions
 import com.wangzan101.mika.core.remote.RemoteTasks
+import com.wangzan101.mika.core.remote.RunExportSource
+import com.wangzan101.mika.record.RunStore
+import com.wangzan101.mika.task.RemoteRunExport
+import com.wangzan101.mika.task.RemoteTaskHub
 import com.wangzan101.mika.settings.McpSettings
 import com.wangzan101.mika.settings.McpUsbSettings
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,16 +60,18 @@ class McpRuntime(
      * with a dummy screen.
      */
     brain: ExternalBrainSessions? = null,
+    private val history: com.wangzan101.mika.core.remote.RemoteHistory? = null,
 ) {
     private val _state = MutableStateFlow<McpServerState>(McpServerState.Off)
     val state: StateFlow<McpServerState> = _state.asStateFlow()
     @Volatile private var host: RemoteHost? = null
     private var hostListen = McpModes.Listen.Off
-    private val endpoints = RemoteEndpoints(tasks, BuildConfig.VERSION_NAME, device = device.access, brain = brain)
+    private val records: RunExportSource? = (tasks as? RemoteTaskHub)?.let { hub -> RemoteRunExport(hub) { RunStore(context) } }
+    private val endpoints = RemoteEndpoints(tasks, BuildConfig.VERSION_NAME, device = device.access, brain = brain, history = history, records = records)
     private val relayAccess = RemoteAccess(token = { if (relaySettings.config.value.enabled) settings.token() else null })
     // 经网关来的请求要另开「允许经网关唤醒和解锁」才看得到屏幕能力;手机上的远程亮屏与解锁许可照样要开。
     private val relay = RelayClient(CoroutineScope(SupervisorJob() + Dispatchers.IO), { req ->
-        relayAccess.handle(req) { endpoints.handle(it, deviceAccess = relaySettings.config.value.deviceAccess) }
+        relayAccess.handle(req) { endpoints.handle(it, deviceAccess = relaySettings.config.value.deviceAccess, historyAccess = false) }
     })
     private val relayNetwork = RelayNetwork(context, relay::networkChanged)
     val relayState get() = relay.state
@@ -127,7 +133,7 @@ class McpRuntime(
      * 等下次打开 Mika 的界面再起。
      */
     fun ensureRunning() {
-        if (!active) return
+        if (!active || com.wangzan101.mika.settings.FeatureFlags.get(context).quitRequested()) return
         runCatching { context.startForegroundService(Intent(context, McpService::class.java)) }
             .onFailure { e ->
                 Log.w(TAG, "could not start computer access service", e)
@@ -140,6 +146,7 @@ class McpRuntime(
      * 本地监听和远程通道均未启用或未能启动时返回 false。
      */
     @Synchronized internal fun sync(): Boolean {
+        if (com.wangzan101.mika.settings.FeatureFlags.get(context).quitRequested()) return false
         val want = listen()
         if (host != null && hostListen != want) stopListener()
         if (want == McpModes.Listen.Off) _state.value = McpServerState.Off

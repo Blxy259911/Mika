@@ -105,7 +105,7 @@ class ChatDeleteAndSelectTest {
         compose.onNodeWithText("删除这个对话？").assertExists()
         val body = compose.onNodeWithTag("delete-conversation-body").fetchSemanticsNode().config
             .getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)?.joinToString { it.text }.orEmpty()
-        assertTrue(body, "天气" in body && "停止" in body && "2" in body)
+        assertTrue(body, "天气" in body && "停止" in body && "2" in body && "保留" in body)
 
         // 取消:什么都不删
         compose.onNodeWithText("取消").performClick()
