@@ -425,9 +425,7 @@ internal object PhoneDial : PhoneTool {
         return ToolExecution(buildJsonObject { put("ok", opened); put("dialerOpened", opened) })
     }
 
-    private companion object {
-        val NUMBER = Regex("^\\+?[0-9*#]{3,20}$")
-    }
+    private val NUMBER = Regex("^\\+?[0-9*#]{3,20}$")
 }
 
 /** 解锁 + 打开拨号盘填号,一次调用做完两步;拨出仍需在拨号盘上点一次。凭据处理同 phone_unlock。 */

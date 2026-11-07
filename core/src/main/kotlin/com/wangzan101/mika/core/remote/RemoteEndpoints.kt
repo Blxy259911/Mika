@@ -42,7 +42,7 @@ class RemoteEndpoints(
         }
         if (req.path == RemoteTaskApi.ROOT || req.path.startsWith("${RemoteTaskApi.ROOT}/")) {
             seen(req.remote, req.header("x-mika-client")?.take(64))
-            val api = RemoteTaskApi(service, serverVersion, device.takeIf { deviceAccess }, history.takeIf { historyAccess }, brainEnabled = brain != null)
+            val api = RemoteTaskApi(service, serverVersion, device.takeIf { deviceAccess }, history = history.takeIf { historyAccess }, brainEnabled = brain != null)
             return api.handle(req)
         }
         return RemoteTaskApi.error(404, "not_found", "No such endpoint")
