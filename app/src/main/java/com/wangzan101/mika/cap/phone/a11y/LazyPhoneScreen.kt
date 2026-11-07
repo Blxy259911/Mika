@@ -31,6 +31,8 @@ class LazyPhoneScreen(
     private val height: Int,
     private val listApps: suspend () -> List<Pair<String, String>>,
     private val appCopies: suspend () -> List<AppCopy> = { emptyList() },
+    private val deviceUnlock: (suspend (String, CharArray) -> Boolean)? = null,
+    private val dial: (suspend (String) -> Boolean)? = null,
     private val acquire: suspend () -> ScreenPort,
 ) : ScreenPort {
     private val lock = Mutex()
@@ -108,6 +110,27 @@ class LazyPhoneScreen(
         screen.ensureDisplay()
         return screen.systemCommand(command)
     }
+    /**
+     * Root commands do not need a display or an open app: they run in
+     * Mika's own app process via su, so they must not go through built().
+     */
+    override suspend fun rootCommand(command: String, timeoutMs: Long): SystemCommandResult? {
+        val result = com.wangzan101.mika.cap.phone.setup.RootCommandRunner.run(command, timeoutMs)
+            ?: return null
+        return SystemCommandResult(result.exitCode, result.output)
+    }
+    /**
+     * 解锁不走虚拟屏、不要求先打开 App:先确保接上助手 shell(和 acquire 同一步),
+     * 再经 Mika 应用进程走主屏 SystemUI 的锁屏流程。凭据只在这一次调用里用,
+     * 调用方(工具层)负责用完清零。
+     */
+    override suspend fun unlockDevice(kind: String, credential: CharArray): Boolean {
+        val unlock = deviceUnlock ?: return false
+        built() ?: return false
+        return unlock(kind, credential)
+    }
+    /** 拨号不走虚拟屏:经 Mika 应用进程发 ACTION_DIAL,在主屏打开拨号盘并填好号码。 */
+    override suspend fun dialNumber(number: String): Boolean = dial?.invoke(number) ?: false
     override suspend fun listApps(): List<Pair<String, String>> = port?.listApps() ?: listApps.invoke()
     // 要问内置助手:没接上之前不为它去接(接不上会请用户设置),打开过 App 之后才有
     override suspend fun otherProfiles(): Map<String, List<String>> = port?.otherProfiles() ?: emptyMap()
